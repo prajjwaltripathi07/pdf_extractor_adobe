@@ -1,0 +1,28 @@
+# Ignore virtualenv
+.venv/
+env/
+
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*.so
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# IDE files
+.idea/
+.vscode/
+
+# MacOS / Windows system files
+.DS_Store
+Thumbs.db
+
+# Output folders
+output/
+input/
+
+# Docker
+*.log
+*.pid
+docker-compose.override.yml
