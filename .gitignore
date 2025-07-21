@@ -1,56 +1,10 @@
-# Byte-compiled / optimized / DLL files
-__pycache__/
-*.py[cod]
-*$py.class
-
-# Virtual environment
 .venv/
-env/
-venv/
-
-# Jupyter Notebook checkpoints
-.ipynb_checkpoints/
-
-# VSCode settings
-.vscode/
-
-# PyCharm settings
-.idea/
-
-# Logs and local files
+__pycache__/
+*.pyc
 *.log
-*.out
-*.bak
-*.tmp
-
-# macOS / Windows files
 .DS_Store
-Thumbs.db
-
-# Environment files (if used)
-.env
-.env.*
-
-# PDF output/input folders (optional, if generated at runtime)
-input/
-output/
-
-# PyMuPDF temporary files (if any)
-*.xref
-
-# Installer logs
-pip-log.txt
-
-# Test / coverage reports (optional)
-htmlcov/
-.coverage
-.tox/
-nosetests.xml
-coverage.xml
-*.cover
-.hypothesis/
-
-# Build
+.idea/
+.vscode/
 build/
 dist/
 *.egg-info/
