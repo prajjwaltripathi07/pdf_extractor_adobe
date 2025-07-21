@@ -548,8 +548,8 @@ class PDFOutlineExtractor:
 
 def main():
     """Main function for Docker container execution"""
-    input_dir = "/app/input"
-    output_dir = "/app/output"
+    input_dir = "input"
+    output_dir = "output"
 
     logger.info("Starting multilingual PDF outline extraction")
 
