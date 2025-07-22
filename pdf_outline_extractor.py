@@ -8,9 +8,10 @@ import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.preprocessing import StandardScaler
-import fitz  # PyMuPDF
+import fitz  
 import unicodedata
 import time
+import csv
 from collections import defaultdict
 
 # Configure logging
@@ -62,6 +63,48 @@ class MultilingualFeatureExtractor:
         )
         self.scaler = StandardScaler()
         self.is_fitted = False
+
+    def get_feature_names(self) -> List[str]:
+        """Returns the names of all features in the correct order."""
+        text_features = [
+            'has_number', 'starts_with_number', 'has_colon', 'has_period', 'all_caps_ratio',
+            'word_count', 'char_count', 'starts_with_capital', 'ends_with_punctuation',
+            'has_question_mark', 'has_exclamation', 'is_all_caps_short',
+            'starts_with_capital_then_lowercase', 'starts_with_bullet',
+            'starts_with_list_item', 'contains_fig_table_keyword', 'heading_keyword_score'
+        ]
+        layout_features = [
+            'font_size', 'font_size_ratio_avg', 'font_size_ratio_median', 'is_bold',
+            'is_italic', 'x_position_normalized', 'y_position_normalized',
+            'width_normalized', 'height_normalized', 'is_significantly_larger_font_median',
+            'is_significantly_larger_font_avg', 'is_roughly_centered',
+            'is_far_left_aligned', 'is_far_right_aligned', 'relative_x_to_main_text',
+            'is_out_left_of_main_text_block', 'is_indented_from_main_text',
+            'normalized_line_spacing', 'absolute_width', 'absolute_height',
+            'absolute_x', 'absolute_y', 'font_size_ratio_max'
+        ]
+        context_features = [
+            'prev_font_size_ratio_median', 'spacing_before_normalized', 'is_prev_bold',
+            'is_same_font_size_as_prev', 'prev_ends_with_period', 'is_indented_from_prev',
+            'large_vertical_gap_before', 'prev_ends_with_colon',
+            'next_font_size_ratio_median', 'spacing_after_normalized', 'is_next_bold',
+            'next_indented_from_current', 'large_vertical_gap_after',
+            'next_starts_with_list_char', 'is_isolated_by_spacing',
+            'page_position_in_elements', 'spans_wide', 'char_count_ratio_avg'
+        ]
+        
+        tfidf_feature_names = []
+        if self.is_fitted:
+            try:
+                # Use get_feature_names_out() which is standard, fallback for safety
+                tfidf_features = self.tfidf_vectorizer.get_feature_names_out()
+                tfidf_feature_names = [f'tfidf_{name}' for name in tfidf_features]
+            except AttributeError:
+                 # Fallback for older sklearn versions
+                num_tfidf_features = len(self.tfidf_vectorizer.vocabulary_)
+                tfidf_feature_names = [f'tfidf_{i}' for i in range(num_tfidf_features)]
+
+        return text_features + layout_features + context_features + tfidf_feature_names
 
     def extract_text_features(self, element: TextElement, doc_stats: Dict) -> List[float]:
         """Extract text-based features with multilingual support"""
@@ -188,7 +231,7 @@ class MultilingualFeatureExtractor:
             next_spacing = abs(elements[index + 1].y - element.y)
             # Isolated by large spacing (relative to average line spacing and font size)
             features[14] = 1 if (prev_spacing > avg_spacing * 2.5 and next_spacing > avg_spacing * 2.5 and
-                                 prev_spacing > median_font_size * 1.5 and next_spacing > median_font_size * 1.5) else 0
+                                  prev_spacing > median_font_size * 1.5 and next_spacing > median_font_size * 1.5) else 0
 
         # Vertical position on page (normalized)
         same_page_elements = [e for e in elements if e.page_num == element.page_num]
@@ -264,15 +307,15 @@ class MultilingualFeatureExtractor:
 
         # Approximate main text block X coordinates
         # Filter out very short lines or lines that are too far left/right
-        relevant_x_coords = [e.x for e in elements if len(e.text.strip()) > 10 and e.width > 0.1 * max(page_widths)]
+        relevant_x_coords = [e.x for e in elements if len(e.text.strip()) > 10 and e.width > 0.1 * max(page_widths, default=612)]
         if relevant_x_coords:
             # Using percentiles to get typical left and right bounds of text
             x_start = np.percentile(relevant_x_coords, 5)
-            x_end_points = [e.x + e.width for e in elements if len(e.text.strip()) > 10 and e.width > 0.1 * max(page_widths)]
+            x_end_points = [e.x + e.width for e in elements if len(e.text.strip()) > 10 and e.width > 0.1 * max(page_widths, default=612)]
             x_end = np.percentile(x_end_points, 95)
         else:
-            x_start = max(page_widths) * 0.1
-            x_end = max(page_widths) * 0.9
+            x_start = max(page_widths, default=612) * 0.1
+            x_end = max(page_widths, default=612) * 0.9
 
         stats = {
             'avg_font_size': np.mean(font_sizes) if font_sizes else 12,
@@ -413,7 +456,7 @@ class HeadingClassifier:
         main_text_x_start = doc_stats.get('main_text_x_start', page_width * 0.1)
 
         # Rule 1: Filter out obviously non-heading text
-        if len(text) < 3 or len(text) > 300: # Increased max length for potential long titles
+        if len(text) < 3 or len(text) > 500: # Increased max length for potential long titles
             return 0
         if len(re.findall(r'[a-zA-Z0-9]', text)) / max(1, len(text)) < 0.3: # Filter mostly symbols/spaces
             return 0
@@ -422,7 +465,7 @@ class HeadingClassifier:
         if re.search(r'\b(www\.|http:|https:|ftp\.)', text): # URLs
             return 0
         if re.match(r'^[A-Za-z]{1,2}$', text): # Single or double letter (often just initials or labels)
-             return 0
+            return 0
 
         # Rule 2: Title detection (highest priority, label 4)
         is_title_candidate_heuristic = (
@@ -517,11 +560,11 @@ class HeadingClassifier:
             heading_score -= 2 # Penalize very long text unless it's very prominent visually
 
         # Classification based on refined score thresholds
-        if heading_score >= 8:
+        if heading_score >= 7:
             return 1  # H1
         elif heading_score >= 5:
             return 2  # H2
-        elif heading_score >= 2:
+        elif heading_score >= 3:
             return 3  # H3
         else:
             return 0  # Not a heading
@@ -547,8 +590,8 @@ class HeadingClassifier:
             logger.error(f"Error during classifier training: {e}", exc_info=True)
             self.is_trained = False
 
-    def predict(self, elements: List[TextElement]) -> List[int]:
-        """Predict heading levels for text elements"""
+    def predict(self, elements: List[TextElement], features: Optional[np.ndarray] = None) -> List[int]:
+        """Predict heading levels for text elements. Can accept pre-computed features."""
         if not elements:
             return []
 
@@ -561,7 +604,9 @@ class HeadingClassifier:
             doc_stats = self.feature_extractor.calculate_document_stats(elements)
             return [self.classify_element_heuristic(elem, doc_stats) for elem in elements]
 
-        features = self.feature_extractor.extract_all_features(elements)
+        # If features are not provided, extract them.
+        if features is None:
+            features = self.feature_extractor.extract_all_features(elements)
 
         if features.size == 0:
             logger.warning("No features extracted for prediction. Returning all zeros.")
@@ -583,8 +628,45 @@ class PDFOutlineExtractor:
         self.pdf_processor = PDFProcessor()
         self.classifier = HeadingClassifier()
 
-    def extract_outline(self, pdf_path: str) -> Dict:
-        """Extract outline from PDF file"""
+    def _save_dataset_as_csv(self, file_path: str, elements: List[TextElement], features: np.ndarray, predictions: List[int]):
+        """Saves the extracted element data and predictions to a CSV file."""
+        try:
+            # Define the header with only the requested fields + the prediction
+            header = [
+                'text', 'predicted_label', 'page_num', 'font_size', 'font_name', 
+                'is_bold', 'is_italic', 'x', 'y', 'width', 'height', 'line_spacing', 'bbox'
+            ]
+
+            with open(file_path, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                writer.writerow(header)
+                
+                # Iterate through elements and write the corresponding attributes to the row
+                for i, element in enumerate(elements):
+                    row = [
+                        element.text,
+                        predictions[i],
+                        element.page_num,
+                        element.font_size,
+                        element.font_name,
+                        element.is_bold,
+                        element.is_italic,
+                        element.x,
+                        element.y,
+                        element.width,
+                        element.height,
+                        element.line_spacing,
+                        str(element.bbox) # Convert tuple to string for CSV compatibility
+                    ]
+                    writer.writerow(row)
+            
+            logger.info(f"Successfully generated dataset at: {file_path}")
+
+        except Exception as e:
+            logger.error(f"Failed to generate CSV dataset for {file_path}: {e}", exc_info=True)
+
+    def extract_outline(self, pdf_path: str, csv_output_path: Optional[str] = None) -> Dict:
+        """Extract outline from PDF file and optionally save the feature dataset."""
         logger.info(f"Processing PDF: {pdf_path}")
         start_time = time.time()
 
@@ -595,7 +677,13 @@ class PDFOutlineExtractor:
 
         logger.info(f"Extracted {len(elements)} text elements from {pdf_path}.")
 
+        # Predict first to ensure the model and feature extractors are fitted
         predictions = self.classifier.predict(elements)
+
+        # If a CSV path is provided, extract features again (now with fitted transformers) and save
+        if csv_output_path:
+            features = self.classifier.feature_extractor.extract_all_features(elements)
+            self._save_dataset_as_csv(csv_output_path, elements, features, predictions)
 
         title = self.extract_title(elements, predictions)
         outline = self.post_process_headings(elements, predictions)
@@ -796,15 +884,19 @@ class PDFOutlineExtractor:
             logger.info(f"Processing file {i+1}/{len(pdf_files)}: '{pdf_file}'")
             try:
                 pdf_path = os.path.join(input_dir, pdf_file)
-                output_file_name = os.path.splitext(pdf_file)[0] + '.json'
-                output_path = os.path.join(output_dir, output_file_name)
+                base_name = os.path.splitext(pdf_file)[0]
+                
+                # Define paths for both JSON and CSV outputs
+                json_output_path = os.path.join(output_dir, base_name + '.json')
+                csv_output_path = os.path.join(output_dir, base_name + '_dataset.csv')
 
-                outline = self.extract_outline(pdf_path)
+                # Pass both paths to the extraction method
+                outline = self.extract_outline(pdf_path, csv_output_path)
 
-                with open(output_path, 'w', encoding='utf-8') as f:
+                with open(json_output_path, 'w', encoding='utf-8') as f:
                     json.dump(outline, f, indent=2, ensure_ascii=False)
 
-                logger.info(f"Successfully processed '{pdf_file}' and saved to '{output_file_name}'.")
+                logger.info(f"Successfully processed '{pdf_file}' and saved outline to '{base_name}.json'.")
 
             except Exception as e:
                 logger.error(f"An error occurred while processing '{pdf_file}': {e}", exc_info=True)
@@ -824,4 +916,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main()  
+    
