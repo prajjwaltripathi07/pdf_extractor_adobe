@@ -1012,10 +1012,11 @@ class PDFOutlineExtractor:
 
 
 def main():
-    """Main function to run the script from the command line."""
+    """
+    MAIN FUNCTION FOR DEVELOPMENT:
+    Use this to train your model or run predictions with specific folders.
+    """
     parser = argparse.ArgumentParser(description="Multilingual PDF Outline Extraction Tool")
-    
-    # Sub-parsers for different actions (train, predict)
     subparsers = parser.add_subparsers(dest='action', required=True, help='Action to perform')
 
     # --- Training Parser ---
@@ -1028,7 +1029,7 @@ def main():
     parser_predict.add_argument('--input-dir', type=str, default='input', help='Input directory containing PDF files.')
     parser_predict.add_argument('--output-dir', type=str, default='output', help='Output directory to save JSON outlines.')
     parser_predict.add_argument('--model-dir', type=str, default='model', help='Directory to load the trained model from.')
-    parser_predict.add_argument('--save-csv', action='store_true', help='If set, save a CSV dataset with features and predictions for each PDF.')
+    parser_predict.add_argument('--save-csv', action='store_true', help='If set, save a CSV dataset for each PDF.')
 
     args = parser.parse_args()
 
@@ -1040,10 +1041,23 @@ def main():
 
     elif args.action == 'predict':
         logger.info("--- Running in Prediction Mode ---")
-        # The extractor will try to load the model from model_dir upon initialization
         extractor = PDFOutlineExtractor(model_dir=args.model_dir)
         extractor.process_directory(args.input_dir, args.output_dir, save_csv=args.save_csv)
         logger.info("--- Prediction complete for all files. ---")
+
+# def main():
+#     """
+#     MAIN FUNCTION FOR HACKATHON SUBMISSION:
+#     Processes all PDFs in /app/input and saves JSONs to /app/output.
+#     """
+#     input_dir = './input'
+#     output_dir = './output'
+#     model_dir = 'model'
+#     logger.info("--- Running in Hackathon Prediction Mode ---")
+#     extractor = PDFOutlineExtractor(model_dir=model_dir)
+#     extractor.process_directory(input_dir, output_dir, save_csv=False)
+#     logger.info("--- All files processed. Exiting. ---")
+
 
 
 if __name__ == "__main__":
