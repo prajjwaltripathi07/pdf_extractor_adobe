@@ -456,7 +456,7 @@ class HeadingClassifier:
         main_text_x_start = doc_stats.get('main_text_x_start', page_width * 0.1)
 
         # Rule 1: Filter out obviously non-heading text
-        if len(text) < 3 or len(text) > 500: # Increased max length for potential long titles
+        if len(text) < 3 or len(text) > 300: # Increased max length for potential long titles
             return 0
         if len(re.findall(r'[a-zA-Z0-9]', text)) / max(1, len(text)) < 0.3: # Filter mostly symbols/spaces
             return 0
@@ -470,13 +470,13 @@ class HeadingClassifier:
         # Rule 2: Title detection (highest priority, label 4)
         is_title_candidate_heuristic = (
             element.page_num == 0 and
-            element.font_size >= max_font_size * 0.85 and # Must be very close to max font
-            element.y < page_height * 0.4 and # In upper 40% of the page
-            element.width > page_width * 0.3 # Title should span a reasonable width
+            element.font_size >= max_font_size * 0.9 and # Must be very close to max font
+            element.y < page_height*0.5  and # ANYWHERE ON THE PAGE
+            element.width < page_width * 0.8 # Title should span a reasonable width
         )
         # More flexible centering check for titles
         is_title_centered_or_wide = (
-            abs((element.x + element.width / 2) - page_width / 2) < page_width * 0.25 or # Roughly centered
+            abs((element.x + element.width / 2) - page_width / 2) < page_width * 0.1 or # Roughly centered
             element.width > page_width * 0.7 # Or spans most of the width
         )
 
@@ -507,7 +507,7 @@ class HeadingClassifier:
         if element.is_italic and not element.is_bold: # Italic alone is weaker
             heading_score += 0.5
 
-        if text.isupper() and len(text.split()) < 15: # ALL CAPS for shorter headings
+        if text.isupper() and len(text.split()) < 20: # ALL CAPS for shorter headings
             heading_score += 1.5
 
         # Feature Group 2: Positioning and Spacing (relative to document stats)
@@ -560,11 +560,11 @@ class HeadingClassifier:
             heading_score -= 2 # Penalize very long text unless it's very prominent visually
 
         # Classification based on refined score thresholds
-        if heading_score >= 7:
+        if heading_score >= 6:
             return 1  # H1
-        elif heading_score >= 5:
+        elif heading_score >= 5 and heading_score < 6:
             return 2  # H2
-        elif heading_score >= 3:
+        elif heading_score >= 3 and heading_score < 5:
             return 3  # H3
         else:
             return 0  # Not a heading
@@ -628,42 +628,42 @@ class PDFOutlineExtractor:
         self.pdf_processor = PDFProcessor()
         self.classifier = HeadingClassifier()
 
-    def _save_dataset_as_csv(self, file_path: str, elements: List[TextElement], features: np.ndarray, predictions: List[int]):
-        """Saves the extracted element data and predictions to a CSV file."""
-        try:
-            # Define the header with only the requested fields + the prediction
-            header = [
-                'text', 'predicted_label', 'page_num', 'font_size', 'font_name', 
-                'is_bold', 'is_italic', 'x', 'y', 'width', 'height', 'line_spacing', 'bbox'
-            ]
+    # def _save_dataset_as_csv(self, file_path: str, elements: List[TextElement], features: np.ndarray, predictions: List[int]):
+    #     """Saves the extracted element data and predictions to a CSV file."""
+    #     try:
+    #         # Define the header with only the requested fields + the prediction
+    #         header = [
+    #             'text', 'predicted_label', 'page_num', 'font_size', 'font_name', 
+    #             'is_bold', 'is_italic', 'x', 'y', 'width', 'height', 'line_spacing', 'bbox'
+    #         ]
 
-            with open(file_path, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.writer(f)
-                writer.writerow(header)
+    #         with open(file_path, 'w', newline='', encoding='utf-8') as f:
+    #             writer = csv.writer(f)
+    #             writer.writerow(header)
                 
-                # Iterate through elements and write the corresponding attributes to the row
-                for i, element in enumerate(elements):
-                    row = [
-                        element.text,
-                        predictions[i],
-                        element.page_num,
-                        element.font_size,
-                        element.font_name,
-                        element.is_bold,
-                        element.is_italic,
-                        element.x,
-                        element.y,
-                        element.width,
-                        element.height,
-                        element.line_spacing,
-                        str(element.bbox) # Convert tuple to string for CSV compatibility
-                    ]
-                    writer.writerow(row)
+    #             # Iterate through elements and write the corresponding attributes to the row
+    #             for i, element in enumerate(elements):
+    #                 row = [
+    #                     element.text,
+    #                     predictions[i],
+    #                     element.page_num,
+    #                     element.font_size,
+    #                     element.font_name,
+    #                     element.is_bold,
+    #                     element.is_italic,
+    #                     element.x,
+    #                     element.y,
+    #                     element.width,
+    #                     element.height,
+    #                     element.line_spacing,
+    #                     str(element.bbox) # Convert tuple to string for CSV compatibility
+    #                 ]
+    #                 writer.writerow(row)
             
-            logger.info(f"Successfully generated dataset at: {file_path}")
+    #         logger.info(f"Successfully generated dataset at: {file_path}")
 
-        except Exception as e:
-            logger.error(f"Failed to generate CSV dataset for {file_path}: {e}", exc_info=True)
+    #     except Exception as e:
+    #         logger.error(f"Failed to generate CSV dataset for {file_path}: {e}", exc_info=True)
 
     def extract_outline(self, pdf_path: str, csv_output_path: Optional[str] = None) -> Dict:
         """Extract outline from PDF file and optionally save the feature dataset."""
@@ -681,9 +681,9 @@ class PDFOutlineExtractor:
         predictions = self.classifier.predict(elements)
 
         # If a CSV path is provided, extract features again (now with fitted transformers) and save
-        if csv_output_path:
-            features = self.classifier.feature_extractor.extract_all_features(elements)
-            self._save_dataset_as_csv(csv_output_path, elements, features, predictions)
+        # if csv_output_path:
+        #     features = self.classifier.feature_extractor.extract_all_features(elements)
+        #     self._save_dataset_as_csv(csv_output_path, elements, features, predictions)
 
         title = self.extract_title(elements, predictions)
         outline = self.post_process_headings(elements, predictions)
@@ -916,5 +916,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()  
-    
+    main()
