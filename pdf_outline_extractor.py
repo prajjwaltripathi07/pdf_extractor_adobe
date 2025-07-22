@@ -8,11 +8,15 @@ import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.preprocessing import StandardScaler
-import fitz  
+import fitz  # PyMuPDF
 import unicodedata
 import time
 import csv
 from collections import defaultdict
+import pickle
+import glob
+import argparse
+import ast
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -424,6 +428,97 @@ class HeadingClassifier:
         self.feature_extractor = MultilingualFeatureExtractor()
         self.is_trained = False
 
+    def save(self, model_dir: str):
+        """Saves the trained model and its components."""
+        os.makedirs(model_dir, exist_ok=True)
+        model_path = os.path.join(model_dir, "heading_classifier.pkl")
+        try:
+            with open(model_path, "wb") as f:
+                pickle.dump({
+                    'model': self.model,
+                    'vectorizer': self.feature_extractor.tfidf_vectorizer,
+                    'scaler': self.feature_extractor.scaler
+                }, f)
+            logger.info(f"Model successfully saved to {model_path}")
+        except Exception as e:
+            logger.error(f"Error saving model: {e}", exc_info=True)
+
+    def load(self, model_dir: str) -> bool:
+        """Loads a pre-trained model and its components."""
+        model_path = os.path.join(model_dir, "heading_classifier.pkl")
+        if not os.path.exists(model_path):
+            logger.warning(f"No pre-trained model found at {model_path}.")
+            return False
+        
+        try:
+            with open(model_path, "rb") as f:
+                components = pickle.load(f)
+            self.model = components['model']
+            self.feature_extractor.tfidf_vectorizer = components['vectorizer']
+            self.feature_extractor.scaler = components['scaler']
+            self.is_trained = True
+            self.feature_extractor.is_fitted = True
+            logger.info(f"Successfully loaded pre-trained model from {model_path}")
+            return True
+        except Exception as e:
+            logger.error(f"Error loading model, will retrain if necessary: {e}", exc_info=True)
+            return False
+
+    def _load_elements_from_csv(self, file_path: str) -> Tuple[List[TextElement], List[int]]:
+        """Loads TextElements and labels from a single CSV file."""
+        elements = []
+        labels = []
+        try:
+            with open(file_path, 'r', newline='', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    try:
+                        element = TextElement(
+                            text=row['text'],
+                            font_size=float(row['font_size']),
+                            font_name=row['font_name'],
+                            is_bold=row['is_bold'] == 'True',
+                            is_italic=row['is_italic'] == 'True',
+                            x=float(row['x']),
+                            y=float(row['y']),
+                            width=float(row['width']),
+                            height=float(row['height']),
+                            page_num=int(row['page_num']),
+                            line_spacing=float(row['line_spacing']),
+                            bbox=ast.literal_eval(row['bbox']) # Safely evaluate string to tuple
+                        )
+                        elements.append(element)
+                        labels.append(int(row['predicted_label'])) # Or 'true_label'
+                    except (ValueError, KeyError, SyntaxError) as e:
+                        logger.warning(f"Skipping malformed row in {file_path}: {row}. Error: {e}")
+        except Exception as e:
+            logger.error(f"Failed to read or process CSV file {file_path}: {e}", exc_info=True)
+        return elements, labels
+
+    def train_from_csv_folder(self, folder_path: str):
+        """Train the classifier using all CSV files in a given folder."""
+        logger.info(f"Starting training from CSV files in '{folder_path}'...")
+        csv_files = glob.glob(os.path.join(folder_path, "*.csv"))
+        
+        if not csv_files:
+            logger.error(f"No CSV files found in '{folder_path}'. Training aborted.")
+            return
+
+        all_elements = []
+        all_labels = []
+        for csv_file in csv_files:
+            logger.info(f"Loading data from {csv_file}")
+            elements, labels = self._load_elements_from_csv(csv_file)
+            all_elements.extend(elements)
+            all_labels.extend(labels)
+
+        if not all_elements:
+            logger.error("No valid data loaded from CSV files. Training aborted.")
+            return
+
+        # Use the combined elements to generate features and train
+        self.train(all_elements, pre_labeled_data=(np.array(all_labels),))
+    
     def create_training_data(self, elements: List[TextElement]) -> Tuple[np.ndarray, np.ndarray]:
         """Create training data based on heuristics"""
         features = self.feature_extractor.extract_all_features(elements)
@@ -569,13 +664,20 @@ class HeadingClassifier:
         else:
             return 0  # Not a heading
 
-    def train(self, elements: List[TextElement]):
-        """Train the classifier"""
+    def train(self, elements: List[TextElement], pre_labeled_data: Optional[Tuple] = None):
+        """Train the classifier using either heuristics or pre-labeled data."""
         if not elements:
             logger.warning("No elements provided for training. Skipping training.")
             return
 
-        X, y = self.create_training_data(elements)
+        if pre_labeled_data:
+            logger.info("Training with pre-labeled data...")
+            y = pre_labeled_data[0]
+            # When training from CSV, feature extractor is fitted on the entire dataset
+            X = self.feature_extractor.extract_all_features(elements)
+        else:
+            logger.info("Generating labels with heuristics for self-supervised training...")
+            X, y = self.create_training_data(elements)
 
         if X.size == 0 or y.size == 0 or len(np.unique(y)) < 2:
             logger.warning("Not enough valid training data generated or only one class present. Skipping classifier training.")
@@ -585,10 +687,11 @@ class HeadingClassifier:
         try:
             self.model.fit(X, y)
             self.is_trained = True
-            logger.info(f"Trained classifier with {len(X)} samples.")
+            logger.info(f"Trained classifier with {len(X)} samples. Class distribution: {dict(zip(*np.unique(y, return_counts=True)))}")
         except Exception as e:
             logger.error(f"Error during classifier training: {e}", exc_info=True)
             self.is_trained = False
+
 
     def predict(self, elements: List[TextElement], features: Optional[np.ndarray] = None) -> List[int]:
         """Predict heading levels for text elements. Can accept pre-computed features."""
@@ -624,46 +727,47 @@ class HeadingClassifier:
 class PDFOutlineExtractor:
     """Main class for extracting PDF outlines"""
 
-    def __init__(self):
+    def __init__(self, model_dir: str = 'model'):
         self.pdf_processor = PDFProcessor()
         self.classifier = HeadingClassifier()
+        self.model_dir = model_dir
+        # Attempt to load a pre-trained model on initialization
+        self.classifier.load(self.model_dir)
 
-    # def _save_dataset_as_csv(self, file_path: str, elements: List[TextElement], features: np.ndarray, predictions: List[int]):
-    #     """Saves the extracted element data and predictions to a CSV file."""
-    #     try:
-    #         # Define the header with only the requested fields + the prediction
-    #         header = [
-    #             'text', 'predicted_label', 'page_num', 'font_size', 'font_name', 
-    #             'is_bold', 'is_italic', 'x', 'y', 'width', 'height', 'line_spacing', 'bbox'
-    #         ]
+    def _save_dataset_as_csv(self, file_path: str, elements: List[TextElement], predictions: List[int]):
+        """Saves the extracted element data and predictions to a CSV file."""
+        try:
+            header = [
+                'text', 'predicted_label', 'page_num', 'font_size', 'font_name', 
+                'is_bold', 'is_italic', 'x', 'y', 'width', 'height', 'line_spacing', 'bbox'
+            ]
 
-    #         with open(file_path, 'w', newline='', encoding='utf-8') as f:
-    #             writer = csv.writer(f)
-    #             writer.writerow(header)
+            with open(file_path, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                writer.writerow(header)
                 
-    #             # Iterate through elements and write the corresponding attributes to the row
-    #             for i, element in enumerate(elements):
-    #                 row = [
-    #                     element.text,
-    #                     predictions[i],
-    #                     element.page_num,
-    #                     element.font_size,
-    #                     element.font_name,
-    #                     element.is_bold,
-    #                     element.is_italic,
-    #                     element.x,
-    #                     element.y,
-    #                     element.width,
-    #                     element.height,
-    #                     element.line_spacing,
-    #                     str(element.bbox) # Convert tuple to string for CSV compatibility
-    #                 ]
-    #                 writer.writerow(row)
+                for i, element in enumerate(elements):
+                    row = [
+                        element.text,
+                        predictions[i],
+                        element.page_num,
+                        element.font_size,
+                        element.font_name,
+                        element.is_bold,
+                        element.is_italic,
+                        element.x,
+                        element.y,
+                        element.width,
+                        element.height,
+                        element.line_spacing,
+                        str(element.bbox) # Convert tuple to string for CSV compatibility
+                    ]
+                    writer.writerow(row)
             
-    #         logger.info(f"Successfully generated dataset at: {file_path}")
+            logger.info(f"Successfully generated dataset at: {file_path}")
 
-    #     except Exception as e:
-    #         logger.error(f"Failed to generate CSV dataset for {file_path}: {e}", exc_info=True)
+        except Exception as e:
+            logger.error(f"Failed to generate CSV dataset for {file_path}: {e}", exc_info=True)
 
     def extract_outline(self, pdf_path: str, csv_output_path: Optional[str] = None) -> Dict:
         """Extract outline from PDF file and optionally save the feature dataset."""
@@ -677,13 +781,10 @@ class PDFOutlineExtractor:
 
         logger.info(f"Extracted {len(elements)} text elements from {pdf_path}.")
 
-        # Predict first to ensure the model and feature extractors are fitted
         predictions = self.classifier.predict(elements)
 
-        # If a CSV path is provided, extract features again (now with fitted transformers) and save
-        # if csv_output_path:
-        #     features = self.classifier.feature_extractor.extract_all_features(elements)
-        #     self._save_dataset_as_csv(csv_output_path, elements, features, predictions)
+        if csv_output_path:
+            self._save_dataset_as_csv(csv_output_path, elements, predictions)
 
         title = self.extract_title(elements, predictions)
         outline = self.post_process_headings(elements, predictions)
@@ -697,6 +798,15 @@ class PDFOutlineExtractor:
             "title": title,
             "outline": outline
         }
+
+    def train_and_save_model(self, assets_dir: str):
+        """High-level function to train from CSVs and save the model."""
+        self.classifier.train_from_csv_folder(assets_dir)
+        if self.classifier.is_trained:
+            self.classifier.save(self.model_dir)
+        else:
+            logger.error("Training failed. Model was not saved.")
+
 
     def extract_title(self, elements: List[TextElement], predictions: List[int]) -> str:
         """Extract document title with multilingual support. Enhanced for higher accuracy."""
@@ -865,7 +975,7 @@ class PDFOutlineExtractor:
 
         return final_outline
 
-    def process_directory(self, input_dir: str, output_dir: str):
+    def process_directory(self, input_dir: str, output_dir: str, save_csv: bool = False):
         """Process all PDF files in input directory"""
         if not os.path.exists(input_dir):
             logger.error(f"Input directory not found: {input_dir}")
@@ -886,11 +996,10 @@ class PDFOutlineExtractor:
                 pdf_path = os.path.join(input_dir, pdf_file)
                 base_name = os.path.splitext(pdf_file)[0]
                 
-                # Define paths for both JSON and CSV outputs
+                # Define paths for outputs
                 json_output_path = os.path.join(output_dir, base_name + '.json')
-                csv_output_path = os.path.join(output_dir, base_name + '_dataset.csv')
+                csv_output_path = os.path.join(output_dir, base_name + '_dataset.csv') if save_csv else None
 
-                # Pass both paths to the extraction method
                 outline = self.extract_outline(pdf_path, csv_output_path)
 
                 with open(json_output_path, 'w', encoding='utf-8') as f:
@@ -903,16 +1012,38 @@ class PDFOutlineExtractor:
 
 
 def main():
-    """Main function for Docker container execution or standalone script."""
-    input_dir = os.environ.get("INPUT_DIR", "input")
-    output_dir = os.environ.get("OUTPUT_DIR", "output")
+    """Main function to run the script from the command line."""
+    parser = argparse.ArgumentParser(description="Multilingual PDF Outline Extraction Tool")
+    
+    # Sub-parsers for different actions (train, predict)
+    subparsers = parser.add_subparsers(dest='action', required=True, help='Action to perform')
 
-    logger.info("Starting multilingual PDF outline extraction process.")
+    # --- Training Parser ---
+    parser_train = subparsers.add_parser('train', help='Train the heading classifier model from CSV data.')
+    parser_train.add_argument('--assets-dir', type=str, default='assets', help='Directory containing the labeled CSV files for training.')
+    parser_train.add_argument('--model-dir', type=str, default='model', help='Directory to save the trained model.')
 
-    extractor = PDFOutlineExtractor()
-    extractor.process_directory(input_dir, output_dir)
+    # --- Prediction Parser ---
+    parser_predict = subparsers.add_parser('predict', help='Predict outlines for PDFs in a directory.')
+    parser_predict.add_argument('--input-dir', type=str, default='input', help='Input directory containing PDF files.')
+    parser_predict.add_argument('--output-dir', type=str, default='output', help='Output directory to save JSON outlines.')
+    parser_predict.add_argument('--model-dir', type=str, default='model', help='Directory to load the trained model from.')
+    parser_predict.add_argument('--save-csv', action='store_true', help='If set, save a CSV dataset with features and predictions for each PDF.')
 
-    logger.info("Multilingual PDF outline extraction completed for all files.")
+    args = parser.parse_args()
+
+    if args.action == 'train':
+        logger.info("--- Running in Training Mode ---")
+        extractor = PDFOutlineExtractor(model_dir=args.model_dir)
+        extractor.train_and_save_model(assets_dir=args.assets_dir)
+        logger.info("--- Training complete. ---")
+
+    elif args.action == 'predict':
+        logger.info("--- Running in Prediction Mode ---")
+        # The extractor will try to load the model from model_dir upon initialization
+        extractor = PDFOutlineExtractor(model_dir=args.model_dir)
+        extractor.process_directory(args.input_dir, args.output_dir, save_csv=args.save_csv)
+        logger.info("--- Prediction complete for all files. ---")
 
 
 if __name__ == "__main__":
