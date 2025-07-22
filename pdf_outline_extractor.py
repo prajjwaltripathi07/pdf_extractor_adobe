@@ -625,7 +625,7 @@ class HeadingClassifier:
         
         # Heading usually don't end with a period unless it's a short numbered entry
         if text.endswith('.') and not re.match(r'^\d+(\.\d+)*(\s|$)', text):
-             heading_score -= 1 # Penalty for ending with a period if not a number sequence
+                heading_score -= 1 # Penalty for ending with a period if not a number sequence
 
         # Feature Group 3: Text Content Patterns (Multilingual & Table Exclusion)
         # Numbering patterns (e.g., 1, 1.1, A, A.1, Roman Numerals)
@@ -654,16 +654,18 @@ class HeadingClassifier:
         if word_count > 30 and not (element.font_size >= max_font_size * 0.8 and element.is_bold):
             heading_score -= 2 # Penalize very long text unless it's very prominent visually
 
-        # Classification based on refined score thresholds
-        if heading_score >= 6:
+        # === CORRECTED THRESHOLDS ===
+        # The thresholds are now adjusted for better class separation.
+        if heading_score >= 8:
             return 1  # H1
-        elif heading_score >= 5 and heading_score < 6:
+        elif heading_score >= 6 and heading_score < 8:
             return 2  # H2
-        elif heading_score >= 3 and heading_score < 5:
+        elif heading_score >= 4 and heading_score < 6:
             return 3  # H3
         else:
             return 0  # Not a heading
-
+    
+    
     def train(self, elements: List[TextElement], pre_labeled_data: Optional[Tuple] = None):
         """Train the classifier using either heuristics or pre-labeled data."""
         if not elements:
@@ -946,9 +948,6 @@ class PDFOutlineExtractor:
                heading["font_size"] > last_headings[current_level - 1]["font_size"] * 0.95:
                 # If current item is above and similar/larger font than previous higher level, promote it
                 current_level = max(1, current_level - 1) # Promote by one level
-
-            # Ensure logical flow: a level X heading cannot appear before a level X-1 heading
-            # on the same page unless it's clearly a new section (much larger font, significant vertical space).
             if current_level > 1 and last_headings[current_level - 1] is None:
                 # If there's no parent of the immediate higher level, check if it should be promoted
                 # e.g., an H3 appears, but no H2 yet. It might be an H2.
@@ -956,6 +955,16 @@ class PDFOutlineExtractor:
                 if heading["font_size"] > median_font_size * 1.2 and \
                    (i == 0 or abs(heading["y_pos"] - raw_headings[i-1]["y_pos"]) > median_font_size * 2):
                     current_level = max(1, current_level - 1) # Promote
+
+            # # Ensure logical flow: a level X heading cannot appear before a level X-1 heading
+            # # on the same page unless it's clearly a new section (much larger font, significant vertical space).
+            # if current_level > 1 and last_headings[current_level - 1] is None:
+            #     # If there's no parent of the immediate higher level, check if it should be promoted
+            #     # e.g., an H3 appears, but no H2 yet. It might be an H2.
+            #     # Check for larger font than typical body and significant vertical gap.
+            #     if heading["font_size"] > median_font_size * 1.2 and \
+            #        (i == 0 or abs(heading["y_pos"] - raw_headings[i-1]["y_pos"]) > median_font_size * 2):
+            #         current_level = max(1, current_level - 1) # Promote
 
             # Update last_headings for current and lower levels
             last_headings[current_level] = heading
@@ -1011,52 +1020,52 @@ class PDFOutlineExtractor:
                 logger.error(f"An error occurred while processing '{pdf_file}': {e}", exc_info=True)
 
 
-def main():
-    """
-    MAIN FUNCTION FOR DEVELOPMENT:
-    Use this to train your model or run predictions with specific folders.
-    """
-    parser = argparse.ArgumentParser(description="Multilingual PDF Outline Extraction Tool")
-    subparsers = parser.add_subparsers(dest='action', required=True, help='Action to perform')
-
-    # --- Training Parser ---
-    parser_train = subparsers.add_parser('train', help='Train the heading classifier model from CSV data.')
-    parser_train.add_argument('--assets-dir', type=str, default='assets', help='Directory containing the labeled CSV files for training.')
-    parser_train.add_argument('--model-dir', type=str, default='model', help='Directory to save the trained model.')
-
-    # --- Prediction Parser ---
-    parser_predict = subparsers.add_parser('predict', help='Predict outlines for PDFs in a directory.')
-    parser_predict.add_argument('--input-dir', type=str, default='input', help='Input directory containing PDF files.')
-    parser_predict.add_argument('--output-dir', type=str, default='output', help='Output directory to save JSON outlines.')
-    parser_predict.add_argument('--model-dir', type=str, default='model', help='Directory to load the trained model from.')
-    parser_predict.add_argument('--save-csv', action='store_true', help='If set, save a CSV dataset for each PDF.')
-
-    args = parser.parse_args()
-
-    if args.action == 'train':
-        logger.info("--- Running in Training Mode ---")
-        extractor = PDFOutlineExtractor(model_dir=args.model_dir)
-        extractor.train_and_save_model(assets_dir=args.assets_dir)
-        logger.info("--- Training complete. ---")
-
-    elif args.action == 'predict':
-        logger.info("--- Running in Prediction Mode ---")
-        extractor = PDFOutlineExtractor(model_dir=args.model_dir)
-        extractor.process_directory(args.input_dir, args.output_dir, save_csv=args.save_csv)
-        logger.info("--- Prediction complete for all files. ---")
-
 # def main():
 #     """
-#     MAIN FUNCTION FOR HACKATHON SUBMISSION:
-#     Processes all PDFs in /app/input and saves JSONs to /app/output.
+#     MAIN FUNCTION FOR DEVELOPMENT:
+#     Use this to train your model or run predictions with specific folders.
 #     """
-#     input_dir = './input'
-#     output_dir = './output'
-#     model_dir = 'model'
-#     logger.info("--- Running in Hackathon Prediction Mode ---")
-#     extractor = PDFOutlineExtractor(model_dir=model_dir)
-#     extractor.process_directory(input_dir, output_dir, save_csv=False)
-#     logger.info("--- All files processed. Exiting. ---")
+#     parser = argparse.ArgumentParser(description="Multilingual PDF Outline Extraction Tool")
+#     subparsers = parser.add_subparsers(dest='action', required=True, help='Action to perform')
+
+#     # --- Training Parser ---
+#     parser_train = subparsers.add_parser('train', help='Train the heading classifier model from CSV data.')
+#     parser_train.add_argument('--assets-dir', type=str, default='assets', help='Directory containing the labeled CSV files for training.')
+#     parser_train.add_argument('--model-dir', type=str, default='model', help='Directory to save the trained model.')
+
+#     # --- Prediction Parser ---
+#     parser_predict = subparsers.add_parser('predict', help='Predict outlines for PDFs in a directory.')
+#     parser_predict.add_argument('--input-dir', type=str, default='input', help='Input directory containing PDF files.')
+#     parser_predict.add_argument('--output-dir', type=str, default='output', help='Output directory to save JSON outlines.')
+#     parser_predict.add_argument('--model-dir', type=str, default='model', help='Directory to load the trained model from.')
+#     parser_predict.add_argument('--save-csv', action='store_true', help='If set, save a CSV dataset for each PDF.')
+
+#     args = parser.parse_args()
+
+#     if args.action == 'train':
+#         logger.info("--- Running in Training Mode ---")
+#         extractor = PDFOutlineExtractor(model_dir=args.model_dir)
+#         extractor.train_and_save_model(assets_dir=args.assets_dir)
+#         logger.info("--- Training complete. ---")
+
+#     elif args.action == 'predict':
+#         logger.info("--- Running in Prediction Mode ---")
+#         extractor = PDFOutlineExtractor(model_dir=args.model_dir)
+#         extractor.process_directory(args.input_dir, args.output_dir, save_csv=args.save_csv)
+#         logger.info("--- Prediction complete for all files. ---")
+
+def main():
+    """
+    MAIN FUNCTION FOR HACKATHON SUBMISSION:
+    Processes all PDFs in /app/input and saves JSONs to /app/output.
+    """
+    input_dir = './input'
+    output_dir = './output'
+    model_dir = 'model'
+    logger.info("--- Running in Hackathon Prediction Mode ---")
+    extractor = PDFOutlineExtractor(model_dir=model_dir)
+    extractor.process_directory(input_dir, output_dir, save_csv=False)
+    logger.info("--- All files processed. Exiting. ---")
 
 
 
