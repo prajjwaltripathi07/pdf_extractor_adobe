@@ -1,73 +1,72 @@
-# Git
+# ---------------------
+# Git & version control
+# ---------------------
 .git
 .gitignore
-.github
+.github/
 
-# Python
-__pycache__
+# ---------------------
+# Python cache & logs
+# ---------------------
+__pycache__/
 *.pyc
 *.pyo
 *.pyd
-.Python
-env
-pip-log.txt
-pip-delete-this-directory.txt
-.tox
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
 *.log
-.git
-.mypy_cache
-.pytest_cache
-.hypothesis
+.cache/
+.mypy_cache/
+.pytest_cache/
+.hypothesis/
 
-# OS
+# ---------------------
+# Virtual environments
+# ---------------------
+venv/
+env/
+ENV/
+
+# ---------------------
+# Build/output artifacts
+# ---------------------
+build/
+dist/
+*.egg-info/
+
+# ---------------------
+# OS junk files
+# ---------------------
 .DS_Store
-.DS_Store?
-._*
 .Spotlight-V100
 .Trashes
 ehthumbs.db
 Thumbs.db
 
-# IDE
-.vscode
-.idea
+# ---------------------
+# IDE/editor files
+# ---------------------
+.vscode/
+.idea/
 *.swp
 *.swo
 *~
 
-# Documentation
-*.md
-README.md
-docs/
+# ---------------------
+# Notebooks (if not used)
+# ---------------------
+*.ipynb
+.ipynb_checkpoints/
 
-# Test files
+# ---------------------
+# Documentation (optional)
+# ---------------------
+docs/
+# README.md    # ← Uncomment if you want to exclude this from the image
+
+# ---------------------
+# Test files (optional)
+# ---------------------
+tests/
 test_*.py
 *_test.py
-tests/
-test/
 
-# Build artifacts
-build/
-dist/
-*.egg-info/
 
-# Virtual environments
-venv/
-env/
-ENV/
-
-# Sample files
-sample*
-example*
-*.pdf
-*.json
-
-# Jupyter notebooks
-*.ipynb
-.ipynb_checkpoints
