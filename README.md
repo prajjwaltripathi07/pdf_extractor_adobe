@@ -95,4 +95,3 @@ docker run --rm -v $(pwd)/input:/app/input -v $(pwd)/output:/app/output --networ
 2. **Feature Selection**: Focused on most discriminative features
 3. **Memory Management**: Efficient data structures and processing
 4. **Character-based Analysis**: Better multilingual support with char-level patterns
-5. **H
